@@ -1,0 +1,4 @@
+sensor_name = "nautilus-sonar"
+sensor_id = "probe-001"
+eve_path = "/var/log/suricata/eve.json"
+output_path = "output/events.jsonl"
