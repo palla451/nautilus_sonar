@@ -1,0 +1,14 @@
+services:
+  nautilus-sonar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nautilus-sonar
+    restart: unless-stopped
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - /var/log/suricata:/var/log/suricata:ro
+      - ./output:/app/output
+    environment:
+      TZ: Europe/Rome

@@ -1,0 +1,7 @@
+target
+.git
+.github
+output
+.env
+Dockerfile*
+docker-compose*.yml

@@ -15,6 +15,8 @@ use reader::EveReader;
 use serde_json::Value;
 
 fn main() -> Result<()> {
+
+    println!("========== SONO IL MAIN REALE ==========");
     dotenvy::dotenv().ok();
 
     let cfg = Config::from_env();
