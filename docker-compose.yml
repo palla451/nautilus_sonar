@@ -1,0 +1,12 @@
+services:
+  nautilus-sonar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nautilus-sonar
+    env_file:
+      - .env
+    volumes:
+      - /var/log/suricata/eve.json:/var/log/suricata/eve.json:ro
+      - ./output:/app/output
+    restart: unless-stopped
