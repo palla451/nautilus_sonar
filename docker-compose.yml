@@ -11,9 +11,24 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: nautilus-sonar
+    command: ["nautilus-sonar"]
     env_file:
       - .env
     volumes:
       - /var/log/suricata:/var/log/suricata:ro
       - ./output:/app/output
     restart: unless-stopped
+    depends_on:
+      - valkey
+
+  nautilus-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nautilus-consumer
+    command: ["nautilus-consumer"]
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - valkey
