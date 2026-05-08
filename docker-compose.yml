@@ -7,6 +7,6 @@ services:
     env_file:
       - .env
     volumes:
-      - /var/log/suricata/eve.json:/var/log/suricata/eve.json:ro
+      - /var/log/suricata:/var/log/suricata:ro
       - ./output:/app/output
     restart: unless-stopped
