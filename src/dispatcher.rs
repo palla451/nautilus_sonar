@@ -27,6 +27,10 @@ pub fn dispatch(event: &ProbeEvent) -> Result<()> {
 
     writeln!(file, "{json}")?;
 
+    if let Err(err) = crate::queue::publish_event(event) {
+        eprintln!("❌ ValKey publish error: {}", err);
+    }
+
     Ok(())
 }
 

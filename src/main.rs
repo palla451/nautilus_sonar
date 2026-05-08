@@ -5,6 +5,7 @@ mod reader;
 mod dispatcher;
 mod host;
 mod probe;
+mod queue;
 
 use anyhow::Result;
 use config::Config;
