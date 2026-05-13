@@ -32,6 +32,11 @@ pub fn normalize_event(
         _ => ProbePayload::Unknown,
     };
 
+    let app_proto = get_string(raw, "app_proto").or_else(|| match event_type.as_str() {
+        "dns" | "http" | "tls" => Some(event_type.clone()),
+        _ => None,
+    });
+
     Some(ProbeEvent {
         timestamp: get_string(raw, "timestamp").unwrap_or_else(now_fallback),
         probe: ProbeInfo {
@@ -47,7 +52,7 @@ pub fn normalize_event(
         dest_ip: get_string(raw, "dest_ip"),
         dest_port: get_u16(raw, "dest_port"),
         proto: get_string(raw, "proto"),
-        app_proto: get_string(raw, "app_proto"),
+        app_proto,
         payload,
     })
 }
