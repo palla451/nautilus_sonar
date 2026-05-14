@@ -5,6 +5,73 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    container_name: nautilus-opensearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=M9q#7vL2!xP4zR8$
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  opensearch-init:
+    image: curlimages/curl:latest
+    container_name: nautilus-opensearch-init
+    restart: "no"
+    volumes:
+      - ./opensearch:/templates:ro
+    entrypoint: ["/bin/sh", "/templates/init.sh"]
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.15.0
+    container_name: nautilus-opensearch-dashboards
+    restart: unless-stopped
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "5601:5601"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      opensearch-init:
+        condition: service_completed_successfully
+
+  dashboards-init:
+    image: curlimages/curl:latest
+    container_name: nautilus-dashboards-init
+    restart: "no"
+    volumes:
+      - ./dashboards:/dashboards:ro
+    entrypoint: ["/bin/sh", "/dashboards/init.sh"]
+    depends_on:
+      opensearch-dashboards:
+        condition: service_started
 
   nautilus-sonar:
     build:
@@ -19,7 +86,8 @@ services:
       - ./output:/app/output
     restart: unless-stopped
     depends_on:
-      - valkey
+      valkey:
+        condition: service_healthy
 
   nautilus-consumer:
     build:
@@ -31,4 +99,12 @@ services:
       - .env
     restart: unless-stopped
     depends_on:
-      - valkey
+      valkey:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      opensearch-init:
+        condition: service_completed_successfully
+
+volumes:
+  opensearch-data:

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostInfo {
@@ -11,6 +12,7 @@ pub struct HostInfo {
 pub struct ProbeInfo {
     pub probe_id: String,
     pub sensor_name: String,
+    pub version: String,
     pub host: HostInfo,
 }
 
@@ -46,6 +48,9 @@ pub struct ProbeEvent {
     pub app_proto: Option<String>,
 
     pub payload: ProbePayload,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_event: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,16 +68,12 @@ pub enum ProbePayload {
 pub struct DnsPayload {
     #[serde(default)]
     pub dns_type: Option<String>,
-
     #[serde(default)]
     pub rcode: Option<String>,
-
     #[serde(default)]
     pub query: Option<String>,
-
     #[serde(default)]
     pub query_type: Option<String>,
-
     #[serde(default)]
     pub answers: Vec<String>,
 }
@@ -81,19 +82,14 @@ pub struct DnsPayload {
 pub struct HttpPayload {
     #[serde(default)]
     pub hostname: Option<String>,
-
     #[serde(default)]
     pub url: Option<String>,
-
     #[serde(default)]
     pub http_method: Option<String>,
-
     #[serde(default)]
     pub protocol: Option<String>,
-
     #[serde(default)]
     pub status: Option<u16>,
-
     #[serde(default)]
     pub length: Option<u64>,
 }
@@ -102,19 +98,14 @@ pub struct HttpPayload {
 pub struct TlsPayload {
     #[serde(default)]
     pub subject: Option<String>,
-
     #[serde(default)]
     pub issuerdn: Option<String>,
-
     #[serde(default)]
     pub sni: Option<String>,
-
     #[serde(default)]
     pub version: Option<String>,
-
     #[serde(default)]
     pub notbefore: Option<String>,
-
     #[serde(default)]
     pub notafter: Option<String>,
 }
@@ -123,19 +114,14 @@ pub struct TlsPayload {
 pub struct FlowPayload {
     #[serde(default)]
     pub state: Option<String>,
-
     #[serde(default)]
     pub reason: Option<String>,
-
     #[serde(default)]
     pub bytes_toclient: Option<u64>,
-
     #[serde(default)]
     pub bytes_toserver: Option<u64>,
-
     #[serde(default)]
     pub pkts_toclient: Option<u64>,
-
     #[serde(default)]
     pub pkts_toserver: Option<u64>,
 }
@@ -144,13 +130,10 @@ pub struct FlowPayload {
 pub struct AlertPayload {
     #[serde(default)]
     pub signature_id: Option<u64>,
-
     #[serde(default)]
     pub signature: Option<String>,
-
     #[serde(default)]
     pub category: Option<String>,
-
     #[serde(default)]
     pub severity: Option<u8>,
 }

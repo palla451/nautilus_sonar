@@ -3,12 +3,31 @@ use redis::streams::{StreamReadOptions, StreamReadReply};
 use redis::{Client, Commands, Value};
 use reqwest::blocking::Client as HttpClient;
 use std::env;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[path = "../model.rs"]
 mod model;
 
+#[path = "../opensearch.rs"]
+mod opensearch;
+
 use model::ProbeEvent;
+use opensearch::OpenSearchClient;
+
+const METRICS_EVERY_EVENTS: u64 = 100;
+
+static EVENTS_RECEIVED: AtomicU64 = AtomicU64::new(0);
+static EVENTS_PROCESSED: AtomicU64 = AtomicU64::new(0);
+static EVENTS_ACKED: AtomicU64 = AtomicU64::new(0);
+static EVENTS_DLQ: AtomicU64 = AtomicU64::new(0);
+static EVENTS_RETRIED: AtomicU64 = AtomicU64::new(0);
+static BACKEND_SENT: AtomicU64 = AtomicU64::new(0);
+static BACKEND_ERRORS: AtomicU64 = AtomicU64::new(0);
+static OPENSEARCH_SENT: AtomicU64 = AtomicU64::new(0);
+static OPENSEARCH_ERRORS: AtomicU64 = AtomicU64::new(0);
+static JSON_ERRORS: AtomicU64 = AtomicU64::new(0);
+static MISSING_PAYLOAD: AtomicU64 = AtomicU64::new(0);
 
 struct BatchItem {
     id: String,
@@ -55,7 +74,12 @@ fn main() -> Result<()> {
     let bearer_token = env::var("BEARER_TOKEN")
         .unwrap_or_else(|_| "test-token".to_string());
 
-    let backend_batch_size: usize = env::var("BACKEND_BATCH_SIZE")
+    let opensearch_enabled = env::var("OPENSEARCH_ENABLED")
+        .unwrap_or_else(|_| "false".to_string())
+        .eq_ignore_ascii_case("true");
+
+    let batch_size: usize = env::var("OPENSEARCH_BATCH_SIZE")
+        .or_else(|_| env::var("BACKEND_BATCH_SIZE"))
         .unwrap_or_else(|_| "100".to_string())
         .parse()
         .unwrap_or(100);
@@ -67,12 +91,28 @@ fn main() -> Result<()> {
     println!("👤 Consumer: {}", consumer);
     println!("⏳ Pending idle ms: {}", pending_idle_ms);
     println!("🔁 Pending retry count: {}", pending_count);
-    println!("📦 Backend batch size: {}", backend_batch_size);
+    println!("📦 Batch size: {}", batch_size);
 
     if backend_enabled {
         println!("📤 Backend abilitato: {}", backend_url);
     } else {
         println!("📤 Backend disabilitato");
+    }
+
+    let opensearch_client = if opensearch_enabled {
+        println!("🔍 OpenSearch abilitato");
+        Some(OpenSearchClient::new()?)
+    } else {
+        println!("🔍 OpenSearch disabilitato");
+        None
+    };
+
+    if backend_enabled && opensearch_enabled {
+        println!("⚠️ Backend e OpenSearch sono entrambi abilitati: gli eventi verranno inviati a entrambi prima dell'ACK");
+    }
+
+    if !backend_enabled && !opensearch_enabled {
+        println!("ℹ️ Nessun sink esterno abilitato: il consumer farà ACK dopo il processing locale");
     }
 
     let redis_client = Client::open(valkey_url)?;
@@ -97,23 +137,25 @@ fn main() -> Result<()> {
             &backend_url,
             &bearer_token,
             &http_client,
+            opensearch_client.as_ref(),
         )?;
 
         let opts = StreamReadOptions::default()
             .group(&group, &consumer)
-            .count(backend_batch_size)
+            .count(batch_size)
             .block(0);
 
-        let reply: StreamReadReply =
-            con.xread_options(&[stream.as_str()], &[">"], &opts)?;
+        let reply: StreamReadReply = con.xread_options(&[stream.as_str()], &[">"], &opts)?;
 
         let mut batch: Vec<BatchItem> = Vec::new();
 
         for stream_key in reply.keys {
             for stream_id in stream_key.ids {
                 let id = stream_id.id.clone();
+                EVENTS_RECEIVED.fetch_add(1, Ordering::Relaxed);
 
                 let Some(value) = stream_id.map.get("payload") else {
+                    MISSING_PAYLOAD.fetch_add(1, Ordering::Relaxed);
                     eprintln!("❌ Evento senza payload [{}]", id);
 
                     send_to_dead_letter(
@@ -125,6 +167,7 @@ fn main() -> Result<()> {
                     )?;
 
                     ack_message(&mut con, &stream, &group, &id)?;
+                    print_metrics_if_needed();
                     continue;
                 };
 
@@ -135,6 +178,7 @@ fn main() -> Result<()> {
                 let event: ProbeEvent = match serde_json::from_str(&payload) {
                     Ok(event) => event,
                     Err(err) => {
+                        JSON_ERRORS.fetch_add(1, Ordering::Relaxed);
                         eprintln!("❌ Errore deserializzazione JSON [{}]: {}", id, err);
 
                         send_to_dead_letter(
@@ -146,30 +190,41 @@ fn main() -> Result<()> {
                         )?;
 
                         ack_message(&mut con, &stream, &group, &id)?;
+                        print_metrics_if_needed();
                         continue;
                     }
                 };
 
+                EVENTS_PROCESSED.fetch_add(1, Ordering::Relaxed);
                 log_event(&event)?;
 
-                if backend_enabled {
+                if backend_enabled || opensearch_client.is_some() {
                     batch.push(BatchItem { id, event });
                 } else {
-                    println!("📤 Backend disabilitato, evento non inviato");
+                    println!("📤 Sink esterni disabilitati, evento non inviato");
                     ack_message(&mut con, &stream, &group, &id)?;
                 }
+
+                print_metrics_if_needed();
             }
         }
 
-        if backend_enabled && !batch.is_empty() {
-            match send_batch_to_backend(&batch, &backend_url, &bearer_token, &http_client) {
+        if !batch.is_empty() {
+            match send_batch_to_sinks(
+                &batch,
+                backend_enabled,
+                &backend_url,
+                &bearer_token,
+                &http_client,
+                opensearch_client.as_ref(),
+            ) {
                 Ok(_) => {
                     for item in batch {
                         ack_message(&mut con, &stream, &group, &item.id)?;
                     }
                 }
                 Err(err) => {
-                    eprintln!("❌ Errore invio batch backend: {}", err);
+                    eprintln!("❌ Errore invio batch ai sink: {}", err);
                     eprintln!("⏳ NO ACK: batch lasciato pending per retry");
                 }
             }
@@ -189,6 +244,7 @@ fn retry_pending_messages(
     backend_url: &str,
     bearer_token: &str,
     http_client: &HttpClient,
+    opensearch_client: Option<&OpenSearchClient>,
 ) -> Result<()> {
     let value: Value = redis::cmd("XAUTOCLAIM")
         .arg(stream)
@@ -203,6 +259,7 @@ fn retry_pending_messages(
     let entries = parse_xautoclaim_entries(value);
 
     if !entries.is_empty() {
+        EVENTS_RETRIED.fetch_add(entries.len() as u64, Ordering::Relaxed);
         println!("🔁 Retry pending messages: {}", entries.len());
     }
 
@@ -218,10 +275,21 @@ fn retry_pending_messages(
             backend_url,
             bearer_token,
             http_client,
+            opensearch_client,
         ) {
+            if opensearch_client.is_some() {
+                OPENSEARCH_ERRORS.fetch_add(1, Ordering::Relaxed);
+            }
+
+            if backend_enabled {
+                BACKEND_ERRORS.fetch_add(1, Ordering::Relaxed);
+            }
+
             eprintln!("❌ Retry fallito [{}]: {}", id, err);
             eprintln!("⏳ NO ACK: evento resta pending [{}]", id);
         }
+
+        print_metrics_if_needed();
     }
 
     Ok(())
@@ -238,12 +306,14 @@ fn handle_pending_message(
     backend_url: &str,
     bearer_token: &str,
     http_client: &HttpClient,
+    opensearch_client: Option<&OpenSearchClient>,
 ) -> Result<()> {
     println!("🔁 Retry evento pending [{}]", id);
 
     let event: ProbeEvent = match serde_json::from_str(payload) {
         Ok(event) => event,
         Err(err) => {
+            JSON_ERRORS.fetch_add(1, Ordering::Relaxed);
             eprintln!("❌ Errore deserializzazione JSON [{}]: {}", id, err);
 
             send_to_dead_letter(
@@ -259,15 +329,69 @@ fn handle_pending_message(
         }
     };
 
+    EVENTS_PROCESSED.fetch_add(1, Ordering::Relaxed);
     log_event(&event)?;
 
-    if backend_enabled {
-        send_to_backend(&event, backend_url, bearer_token, http_client)?;
+    if backend_enabled || opensearch_client.is_some() {
+        let batch = vec![BatchItem {
+            id: id.to_string(),
+            event,
+        }];
+
+        send_batch_to_sinks(
+            &batch,
+            backend_enabled,
+            backend_url,
+            bearer_token,
+            http_client,
+            opensearch_client,
+        )?;
     } else {
-        println!("📤 Backend disabilitato, evento non inviato");
+        println!("📤 Sink esterni disabilitati, evento non inviato");
     }
 
     ack_message(con, stream, group, id)?;
+
+    Ok(())
+}
+
+fn send_batch_to_sinks(
+    batch: &[BatchItem],
+    backend_enabled: bool,
+    backend_url: &str,
+    bearer_token: &str,
+    http_client: &HttpClient,
+    opensearch_client: Option<&OpenSearchClient>,
+) -> Result<()> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(os_client) = opensearch_client {
+        let events: Vec<ProbeEvent> = batch.iter().map(|item| item.event.clone()).collect();
+
+        match os_client.send_batch(&events) {
+            Ok(_) => {
+                OPENSEARCH_SENT.fetch_add(events.len() as u64, Ordering::Relaxed);
+            }
+            Err(err) => {
+                OPENSEARCH_ERRORS.fetch_add(1, Ordering::Relaxed);
+                anyhow::bail!("OpenSearch send failed: {}", err);
+            }
+        }
+    }
+
+    if backend_enabled {
+        match send_batch_to_backend(batch, backend_url, bearer_token, http_client) {
+            Ok(_) => {
+                BACKEND_SENT.fetch_add(batch.len() as u64, Ordering::Relaxed);
+            }
+            Err(err) => {
+                BACKEND_ERRORS.fetch_add(1, Ordering::Relaxed);
+                anyhow::bail!("Backend send failed: {}", err);
+            }
+        }
+    }
 
     Ok(())
 }
@@ -305,7 +429,6 @@ fn parse_xautoclaim_entries(value: Value) -> Vec<(String, String)> {
         };
 
         let mut payload: Option<String> = None;
-
         let mut i = 0;
 
         while i + 1 < fields.len() {
@@ -357,27 +480,6 @@ fn log_event(event: &ProbeEvent) -> Result<()> {
     Ok(())
 }
 
-fn send_to_backend(
-    event: &ProbeEvent,
-    backend_url: &str,
-    bearer_token: &str,
-    http_client: &HttpClient,
-) -> Result<()> {
-    let response = http_client
-        .post(backend_url)
-        .bearer_auth(bearer_token)
-        .json(event)
-        .send()?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("backend returned HTTP {}", response.status());
-    }
-
-    println!("📤 Evento inviato al backend");
-
-    Ok(())
-}
-
 fn send_batch_to_backend(
     batch: &[BatchItem],
     backend_url: &str,
@@ -396,7 +498,7 @@ fn send_batch_to_backend(
         anyhow::bail!("backend returned HTTP {}", response.status());
     }
 
-    println!("📤 Batch inviato al backend: {} eventi", events.len());
+    println!("📤 Backend batch inviato: {} eventi", events.len());
 
     Ok(())
 }
@@ -419,6 +521,8 @@ fn send_to_dead_letter(
         .arg(payload)
         .query::<()>(con)?;
 
+    EVENTS_DLQ.fetch_add(1, Ordering::Relaxed);
+
     println!(
         "☠️ Evento inviato in dead-letter-stream [{}]: {}",
         original_id, reason
@@ -434,6 +538,7 @@ fn ack_message(
     id: &str,
 ) -> Result<()> {
     let _: i32 = con.xack(stream, group, &[id])?;
+    EVENTS_ACKED.fetch_add(1, Ordering::Relaxed);
     println!("✅ ACK inviato [{}]", id);
     Ok(())
 }
@@ -463,4 +568,27 @@ fn ensure_group(
     }
 
     Ok(())
+}
+
+fn print_metrics_if_needed() {
+    let received = EVENTS_RECEIVED.load(Ordering::Relaxed);
+
+    if received == 0 || received % METRICS_EVERY_EVENTS != 0 {
+        return;
+    }
+
+    println!(
+        "📊 CONSUMER metrics | received={} processed={} acked={} dlq={} retried={} backend_sent={} backend_errors={} opensearch_sent={} opensearch_errors={} json_errors={} missing_payload={}",
+        received,
+        EVENTS_PROCESSED.load(Ordering::Relaxed),
+        EVENTS_ACKED.load(Ordering::Relaxed),
+        EVENTS_DLQ.load(Ordering::Relaxed),
+        EVENTS_RETRIED.load(Ordering::Relaxed),
+        BACKEND_SENT.load(Ordering::Relaxed),
+        BACKEND_ERRORS.load(Ordering::Relaxed),
+        OPENSEARCH_SENT.load(Ordering::Relaxed),
+        OPENSEARCH_ERRORS.load(Ordering::Relaxed),
+        JSON_ERRORS.load(Ordering::Relaxed),
+        MISSING_PAYLOAD.load(Ordering::Relaxed),
+    );
 }

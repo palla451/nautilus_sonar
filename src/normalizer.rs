@@ -3,6 +3,7 @@ use crate::model::{
     ProbePayload, TlsPayload,
 };
 use serde_json::Value;
+use std::env;
 
 pub fn normalize_event(
     raw: &Value,
@@ -42,6 +43,7 @@ pub fn normalize_event(
         probe: ProbeInfo {
             probe_id: probe_id.to_string(),
             sensor_name: sensor_name.to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             host: host.clone(),
         },
         in_iface: get_string(raw, "in_iface"),
@@ -54,7 +56,20 @@ pub fn normalize_event(
         proto: get_string(raw, "proto"),
         app_proto,
         payload,
+        raw_event: raw_event_if_enabled(raw),
     })
+}
+
+fn raw_event_if_enabled(raw: &Value) -> Option<Value> {
+    let enabled = env::var("RAW_EVENT_ENABLED")
+        .unwrap_or_else(|_| "false".to_string())
+        .eq_ignore_ascii_case("true");
+
+    if enabled {
+        Some(raw.clone())
+    } else {
+        None
+    }
 }
 
 fn normalize_dns(raw: &Value) -> DnsPayload {
@@ -88,14 +103,8 @@ fn normalize_dns(raw: &Value) -> DnsPayload {
         .unwrap_or_default();
 
     DnsPayload {
-        dns_type: dns
-            .and_then(|d| d.get("type"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        rcode: dns
-            .and_then(|d| d.get("rcode"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
+        dns_type: dns.and_then(|d| d.get("type")).and_then(|v| v.as_str()).map(str::to_string),
+        rcode: dns.and_then(|d| d.get("rcode")).and_then(|v| v.as_str()).map(str::to_string),
         query,
         query_type,
         answers,
@@ -106,29 +115,12 @@ fn normalize_http(raw: &Value) -> HttpPayload {
     let http = raw.get("http");
 
     HttpPayload {
-        hostname: http
-            .and_then(|h| h.get("hostname"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        url: http
-            .and_then(|h| h.get("url"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        http_method: http
-            .and_then(|h| h.get("http_method"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        protocol: http
-            .and_then(|h| h.get("protocol"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        status: http
-            .and_then(|h| h.get("status"))
-            .and_then(|v| v.as_u64())
-            .and_then(|n| u16::try_from(n).ok()),
-        length: http
-            .and_then(|h| h.get("length"))
-            .and_then(|v| v.as_u64()),
+        hostname: http.and_then(|h| h.get("hostname")).and_then(|v| v.as_str()).map(str::to_string),
+        url: http.and_then(|h| h.get("url")).and_then(|v| v.as_str()).map(str::to_string),
+        http_method: http.and_then(|h| h.get("http_method")).and_then(|v| v.as_str()).map(str::to_string),
+        protocol: http.and_then(|h| h.get("protocol")).and_then(|v| v.as_str()).map(str::to_string),
+        status: http.and_then(|h| h.get("status")).and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok()),
+        length: http.and_then(|h| h.get("length")).and_then(|v| v.as_u64()),
     }
 }
 
@@ -136,30 +128,12 @@ fn normalize_tls(raw: &Value) -> TlsPayload {
     let tls = raw.get("tls");
 
     TlsPayload {
-        subject: tls
-            .and_then(|t| t.get("subject"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        issuerdn: tls
-            .and_then(|t| t.get("issuerdn"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        sni: tls
-            .and_then(|t| t.get("sni"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        version: tls
-            .and_then(|t| t.get("version"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        notbefore: tls
-            .and_then(|t| t.get("notbefore"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        notafter: tls
-            .and_then(|t| t.get("notafter"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
+        subject: tls.and_then(|t| t.get("subject")).and_then(|v| v.as_str()).map(str::to_string),
+        issuerdn: tls.and_then(|t| t.get("issuerdn")).and_then(|v| v.as_str()).map(str::to_string),
+        sni: tls.and_then(|t| t.get("sni")).and_then(|v| v.as_str()).map(str::to_string),
+        version: tls.and_then(|t| t.get("version")).and_then(|v| v.as_str()).map(str::to_string),
+        notbefore: tls.and_then(|t| t.get("notbefore")).and_then(|v| v.as_str()).map(str::to_string),
+        notafter: tls.and_then(|t| t.get("notafter")).and_then(|v| v.as_str()).map(str::to_string),
     }
 }
 
@@ -167,26 +141,12 @@ fn normalize_flow(raw: &Value) -> FlowPayload {
     let flow = raw.get("flow");
 
     FlowPayload {
-        state: flow
-            .and_then(|f| f.get("state"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        reason: flow
-            .and_then(|f| f.get("reason"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        bytes_toclient: flow
-            .and_then(|f| f.get("bytes_toclient"))
-            .and_then(|v| v.as_u64()),
-        bytes_toserver: flow
-            .and_then(|f| f.get("bytes_toserver"))
-            .and_then(|v| v.as_u64()),
-        pkts_toclient: flow
-            .and_then(|f| f.get("pkts_toclient"))
-            .and_then(|v| v.as_u64()),
-        pkts_toserver: flow
-            .and_then(|f| f.get("pkts_toserver"))
-            .and_then(|v| v.as_u64()),
+        state: flow.and_then(|f| f.get("state")).and_then(|v| v.as_str()).map(str::to_string),
+        reason: flow.and_then(|f| f.get("reason")).and_then(|v| v.as_str()).map(str::to_string),
+        bytes_toclient: flow.and_then(|f| f.get("bytes_toclient")).and_then(|v| v.as_u64()),
+        bytes_toserver: flow.and_then(|f| f.get("bytes_toserver")).and_then(|v| v.as_u64()),
+        pkts_toclient: flow.and_then(|f| f.get("pkts_toclient")).and_then(|v| v.as_u64()),
+        pkts_toserver: flow.and_then(|f| f.get("pkts_toserver")).and_then(|v| v.as_u64()),
     }
 }
 
@@ -194,21 +154,10 @@ fn normalize_alert(raw: &Value) -> AlertPayload {
     let alert = raw.get("alert");
 
     AlertPayload {
-        signature_id: alert
-            .and_then(|a| a.get("signature_id"))
-            .and_then(|v| v.as_u64()),
-        signature: alert
-            .and_then(|a| a.get("signature"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        category: alert
-            .and_then(|a| a.get("category"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        severity: alert
-            .and_then(|a| a.get("severity"))
-            .and_then(|v| v.as_u64())
-            .and_then(|n| u8::try_from(n).ok()),
+        signature_id: alert.and_then(|a| a.get("signature_id")).and_then(|v| v.as_u64()),
+        signature: alert.and_then(|a| a.get("signature")).and_then(|v| v.as_str()).map(str::to_string),
+        category: alert.and_then(|a| a.get("category")).and_then(|v| v.as_str()).map(str::to_string),
+        severity: alert.and_then(|a| a.get("severity")).and_then(|v| v.as_u64()).and_then(|n| u8::try_from(n).ok()),
     }
 }
 
