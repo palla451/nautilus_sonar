@@ -106,5 +106,24 @@ services:
       opensearch-init:
         condition: service_completed_successfully
 
+  nautilus-correlator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nautilus-correlator
+    command: ["nautilus-correlator"]
+    env_file:
+      - .env
+    volumes:
+      - ./rules:/app/rules:ro
+    restart: unless-stopped
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      opensearch-init:
+        condition: service_completed_successfully
+      nautilus-consumer:
+        condition: service_started
+
 volumes:
   opensearch-data:

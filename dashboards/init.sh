@@ -25,6 +25,20 @@ curl -s -X POST \
   }'
 
 echo ""
+echo "📊 Creo Data View Nautilus Incidents..."
+
+curl -s -X POST \
+  "http://opensearch-dashboards:5601/api/saved_objects/index-pattern/nautilus-incidents-data-view?overwrite=true" \
+  -H "osd-xsrf: true" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "attributes": {
+      "title": "nautilus-incidents*",
+      "timeFieldName": "timestamp"
+    }
+  }'
+
+echo ""
 echo "📥 Importo dashboard Nautilus..."
 
 curl -s -X POST \
@@ -34,3 +48,14 @@ curl -s -X POST \
 
 echo ""
 echo "✅ Dashboard Nautilus importata"
+
+echo ""
+echo "📥 Importo dashboard Nautilus Incidents..."
+
+curl -s -X POST \
+  "http://opensearch-dashboards:5601/api/saved_objects/_import?overwrite=true" \
+  -H "osd-xsrf: true" \
+  --form file=@/dashboards/nautilus-incidents-dashboard.ndjson
+
+echo ""
+echo "✅ Dashboard Nautilus Incidents importata"

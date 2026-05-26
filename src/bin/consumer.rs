@@ -29,9 +29,9 @@ static OPENSEARCH_ERRORS: AtomicU64 = AtomicU64::new(0);
 static JSON_ERRORS: AtomicU64 = AtomicU64::new(0);
 static MISSING_PAYLOAD: AtomicU64 = AtomicU64::new(0);
 
-struct BatchItem {
-    id: String,
-    event: ProbeEvent,
+pub struct BatchItem {
+    pub id: String,
+    pub event: ProbeEvent,
 }
 
 fn main() -> Result<()> {
@@ -64,6 +64,11 @@ fn main() -> Result<()> {
         .parse()
         .unwrap_or(10);
 
+    let read_block_ms: usize = env::var("VALKEY_READ_BLOCK_MS")
+        .unwrap_or_else(|_| "5000".to_string())
+        .parse()
+        .unwrap_or(5000);
+
     let backend_enabled = env::var("BACKEND_ENABLED")
         .unwrap_or_else(|_| "false".to_string())
         .eq_ignore_ascii_case("true");
@@ -91,6 +96,7 @@ fn main() -> Result<()> {
     println!("👤 Consumer: {}", consumer);
     println!("⏳ Pending idle ms: {}", pending_idle_ms);
     println!("🔁 Pending retry count: {}", pending_count);
+    println!("⏱️ Read block ms: {}", read_block_ms);
     println!("📦 Batch size: {}", batch_size);
 
     if backend_enabled {
@@ -108,11 +114,11 @@ fn main() -> Result<()> {
     };
 
     if backend_enabled && opensearch_enabled {
-        println!("⚠️ Backend e OpenSearch sono entrambi abilitati: gli eventi verranno inviati a entrambi prima dell'ACK");
+        println!("⚠️ Backend e OpenSearch entrambi abilitati: ACK solo dopo invio riuscito su entrambi");
     }
 
     if !backend_enabled && !opensearch_enabled {
-        println!("ℹ️ Nessun sink esterno abilitato: il consumer farà ACK dopo il processing locale");
+        println!("ℹ️ Nessun sink esterno abilitato: ACK dopo processing locale");
     }
 
     let redis_client = Client::open(valkey_url)?;
@@ -143,7 +149,7 @@ fn main() -> Result<()> {
         let opts = StreamReadOptions::default()
             .group(&group, &consumer)
             .count(batch_size)
-            .block(0);
+            .block(read_block_ms);
 
         let reply: StreamReadReply = con.xread_options(&[stream.as_str()], &[">"], &opts)?;
 
@@ -368,11 +374,10 @@ fn send_batch_to_sinks(
     }
 
     if let Some(os_client) = opensearch_client {
-        let events: Vec<ProbeEvent> = batch.iter().map(|item| item.event.clone()).collect();
-
-        match os_client.send_batch(&events) {
+        match os_client.send_batch(batch) {
             Ok(_) => {
-                OPENSEARCH_SENT.fetch_add(events.len() as u64, Ordering::Relaxed);
+                OPENSEARCH_SENT.fetch_add(batch.len() as u64, Ordering::Relaxed);
+                println!("🔍 OpenSearch batch inviato: {} eventi", batch.len());
             }
             Err(err) => {
                 OPENSEARCH_ERRORS.fetch_add(1, Ordering::Relaxed);
