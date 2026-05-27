@@ -1,0 +1,49 @@
+services:
+  nginx:
+    image: nginx:latest
+    container_name: nautilus-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./backend:/var/www/backend
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+    networks:
+      - nautilus-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: nautilus-backend
+    volumes:
+      - ./backend:/var/www/backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - postgres
+    networks:
+      - nautilus-network
+
+  postgres:
+    image: postgres:16
+    container_name: nautilus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nautilus
+      POSTGRES_USER: nautilus
+      POSTGRES_PASSWORD: nautilus
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - nautilus-network
+
+networks:
+  nautilus-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
