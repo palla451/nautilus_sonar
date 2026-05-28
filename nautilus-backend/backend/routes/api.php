@@ -4,6 +4,9 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\ProbeController;
 use App\Http\Controllers\Api\EventIngestionController;
 use App\Http\Controllers\Api\RuleController;
+use App\Http\Controllers\Api\IncidentIngestionController;
+
+Route::post('/incidents/ingest', [IncidentIngestionController::class, 'ingest']);
 
 
 Route::get('/probes', [ProbeController::class, 'index']);

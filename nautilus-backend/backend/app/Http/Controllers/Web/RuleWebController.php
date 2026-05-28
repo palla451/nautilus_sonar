@@ -27,18 +27,51 @@ class RuleWebController extends Controller
             'name' => ['required', 'string'],
             'description' => ['nullable', 'string'],
             'type' => ['required', 'string'],
-            'content' => ['required', 'string'],
             'version' => ['nullable', 'integer'],
             'enabled' => ['nullable'],
         ]);
 
+        $type = $request->input('type');
+
+        if ($type === 'aggregation') {
+            $content = [
+                'id' => Str::slug($request->input('name'), '_'),
+                'source_index' => $request->input('source_index', 'nautilus-events'),
+                'target_index' => $request->input('target_index', 'nautilus-incidents'),
+                'filter' => [
+                    'event_type' => $request->input('filter_event_type'),
+                ],
+                'group_by' => array_values(array_filter(array_map(
+                    'trim',
+                    explode(',', $request->input('group_by', ''))
+                ))),
+                'threshold' => [
+                    'count' => (int) $request->input('threshold_count', 3),
+                    'window_seconds' => (int) $request->input('window_seconds', 300),
+                ],
+                'severity' => $request->input('severity', 'low'),
+                'incident_type' => $request->input('incident_type', Str::slug($request->input('name'), '_')),
+                'run_every_seconds' => (int) $request->input('run_every_seconds', 60),
+            ];
+        } else {
+            $content = json_decode($request->input('content'), true);
+
+            if (!is_array($content)) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'content' => 'Invalid JSON content.',
+                    ]);
+            }
+        }
+
         Rule::create([
             'uuid' => (string) Str::uuid(),
-            'name' => $request->name,
-            'description' => $request->description,
-            'type' => $request->type,
-            'content' => $request->content,
-            'version' => $request->version ?? 1,
+            'name' => $request->input('name'),
+            'description' => $request->input('description'),
+            'type' => $type,
+            'content' => json_encode($content, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+            'version' => $request->input('version', 1),
             'enabled' => $request->has('enabled'),
         ]);
 

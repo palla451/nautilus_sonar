@@ -127,6 +127,13 @@
       <path value="$PROJECT_DIR$/backend/vendor/doctrine/inflector" />
       <path value="$PROJECT_DIR$/backend/vendor/doctrine/lexer" />
       <path value="$PROJECT_DIR$/backend/vendor/fakerphp/faker" />
+      <path value="$PROJECT_DIR$/backend/vendor/laravel/sanctum" />
+      <path value="$PROJECT_DIR$/backend/vendor/react/promise" />
+      <path value="$PROJECT_DIR$/backend/vendor/ezimuel/guzzlestreams" />
+      <path value="$PROJECT_DIR$/backend/vendor/ezimuel/ringphp" />
+      <path value="$PROJECT_DIR$/backend/vendor/opensearch-project/opensearch-php" />
+      <path value="$PROJECT_DIR$/backend/vendor/php-http/discovery" />
+      <path value="$PROJECT_DIR$/backend/vendor/symfony/yaml" />
     </include_path>
   </component>
   <component name="PhpProjectSharedConfiguration" php_language_level="8.3">
