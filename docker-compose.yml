@@ -85,6 +85,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - /var/log/suricata:/var/log/suricata:ro
+      - /var/lib/suricata/rules:/var/lib/suricata/rules
       - ./output:/app/output
     restart: unless-stopped
     depends_on:
@@ -113,11 +114,13 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: nautilus-correlator
-    command: ["nautilus-correlator"]
+    command: [ "nautilus-correlator" ]
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./rules:/app/rules:ro
+      - ./output:/app/output
     restart: unless-stopped
     depends_on:
       opensearch:

@@ -26,7 +26,7 @@ class RuleWebController extends Controller
         $request->validate([
             'name' => ['required', 'string'],
             'description' => ['nullable', 'string'],
-            'type' => ['required', 'string'],
+            'type' => ['required', 'string', 'in:aggregation,correlation,suricata'],
             'version' => ['nullable', 'integer'],
             'enabled' => ['nullable'],
         ]);
@@ -34,13 +34,19 @@ class RuleWebController extends Controller
         $type = $request->input('type');
 
         if ($type === 'aggregation') {
+            $filter = [
+                'event_type' => $request->input('filter_event_type', 'alert'),
+            ];
+
+            if ($request->filled('filter_signature_id')) {
+                $filter['payload.signature_id'] = (int) $request->input('filter_signature_id');
+            }
+
             $content = [
                 'id' => Str::slug($request->input('name'), '_'),
                 'source_index' => $request->input('source_index', 'nautilus-events'),
                 'target_index' => $request->input('target_index', 'nautilus-incidents'),
-                'filter' => [
-                    'event_type' => $request->input('filter_event_type'),
-                ],
+                'filter' => $filter,
                 'group_by' => array_values(array_filter(array_map(
                     'trim',
                     explode(',', $request->input('group_by', ''))
@@ -50,8 +56,20 @@ class RuleWebController extends Controller
                     'window_seconds' => (int) $request->input('window_seconds', 300),
                 ],
                 'severity' => $request->input('severity', 'low'),
-                'incident_type' => $request->input('incident_type', Str::slug($request->input('name'), '_')),
+                'incident_type' => $request->input(
+                    'incident_type',
+                    Str::slug($request->input('name'), '_')
+                ),
                 'run_every_seconds' => (int) $request->input('run_every_seconds', 60),
+            ];
+        } elseif ($type === 'suricata') {
+            $request->validate([
+                'suricata_rule' => ['required', 'string'],
+            ]);
+
+            $content = [
+                'engine' => 'suricata',
+                'rule' => trim($request->input('suricata_rule')),
             ];
         } else {
             $content = json_decode($request->input('content'), true);

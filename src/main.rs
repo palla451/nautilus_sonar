@@ -7,9 +7,7 @@ mod host;
 mod probe;
 mod queue;
 mod rules_client;
-mod aggregation_engine;
 
-use aggregation_engine::AggregationEngine;
 use anyhow::Result;
 use config::Config;
 use host::get_host_info;
@@ -17,6 +15,7 @@ use normalizer::normalize_event;
 use probe::get_or_create_probe_id;
 use reader::EveReader;
 use serde_json::Value;
+use std::env;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<()> {
@@ -28,7 +27,7 @@ fn main() -> Result<()> {
     let host_info = get_host_info();
     let probe_id = get_or_create_probe_id()?;
 
-    println!("🚀 Probe avviata");
+    println!("🚀 Nautilus Sonar avviata");
     println!("📄 Lettura da: {}", cfg.eve_path);
     println!("🆔 Probe ID: {}", probe_id);
     println!("📡 Sensor: {}", cfg.sensor_name);
@@ -47,39 +46,34 @@ fn main() -> Result<()> {
     }
 
     if cfg.backend_enabled {
-        println!("📤 Backend abilitato: {}", cfg.backend_url);
+        println!("📤 Backend HTTP abilitato: {}", cfg.backend_url);
     } else {
-        println!("📤 Backend disabilitato");
+        println!("📤 Backend HTTP disabilitato");
     }
 
-    let rules_sync_enabled = std::env::var("RULES_SYNC_ENABLED")
-        .unwrap_or_else(|_| "false".to_string())
-        == "true";
+    let rules_sync_enabled = env_bool("RULES_SYNC_ENABLED", false);
 
-    let rules_backend_url = std::env::var("RULES_BACKEND_URL")
+    let rules_backend_url = env::var("RULES_BACKEND_URL")
         .unwrap_or_else(|_| cfg.backend_url.clone());
 
-    let rules_cache_file = std::env::var("RULES_CACHE_FILE")
+    let rules_cache_file = env::var("RULES_CACHE_FILE")
         .unwrap_or_else(|_| "/app/output/rules_cache.json".to_string());
 
-    let rules_sync_interval_seconds: u64 = std::env::var("RULES_SYNC_INTERVAL_SECONDS")
-        .unwrap_or_else(|_| "60".to_string())
-        .parse()
-        .unwrap_or(60);
+    let suricata_rules_file = env::var("SURICATA_RULES_FILE")
+        .unwrap_or_else(|_| "/var/lib/suricata/rules/nautilus.rules".to_string());
+
+    let rules_sync_interval_seconds = env_u64("RULES_SYNC_INTERVAL_SECONDS", 60);
 
     if rules_sync_enabled {
         sync_rules_or_use_cache(
             &rules_backend_url,
             &probe_id,
             &rules_cache_file,
+            &suricata_rules_file,
         );
     } else {
         println!("📜 Rules sync disabilitato");
     }
-
-    let aggregation_rules = load_aggregation_rules_from_cache(&rules_cache_file);
-
-    let mut aggregation_engine = AggregationEngine::new(aggregation_rules);
 
     let mut last_rules_sync = Instant::now();
 
@@ -93,11 +87,8 @@ fn main() -> Result<()> {
                 &rules_backend_url,
                 &probe_id,
                 &rules_cache_file,
+                &suricata_rules_file,
             );
-
-            let updated_rules = load_aggregation_rules_from_cache(&rules_cache_file);
-
-            aggregation_engine.reload_rules(updated_rules);
 
             last_rules_sync = Instant::now();
         }
@@ -113,17 +104,6 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&event)?);
 
             dispatcher::dispatch(&event)?;
-
-            let event_value = serde_json::to_value(&event)?;
-
-            let incidents = aggregation_engine.process_event(&event_value)?;
-
-            for incident in incidents {
-                println!(
-                    "🚨 INCIDENT DETECTED:\n{}",
-                    serde_json::to_string_pretty(&incident)?
-                );
-            }
         }
     }
 }
@@ -132,6 +112,7 @@ fn sync_rules_or_use_cache(
     rules_backend_url: &str,
     probe_id: &str,
     rules_cache_file: &str,
+    suricata_rules_file: &str,
 ) {
     match rules_client::sync_rules(
         rules_backend_url,
@@ -144,6 +125,11 @@ fn sync_rules_or_use_cache(
                 response.rules_count,
                 response.ruleset_version
             );
+
+            update_suricata_rules_from_cache(
+                rules_cache_file,
+                suricata_rules_file,
+            );
         }
 
         Err(e) => {
@@ -155,6 +141,11 @@ fn sync_rules_or_use_cache(
                         "✅ Uso rules cache locale: {} rule(s), version {}",
                         cache.rules_count,
                         cache.ruleset_version
+                    );
+
+                    update_suricata_rules_from_cache(
+                        rules_cache_file,
+                        suricata_rules_file,
                     );
                 }
 
@@ -169,28 +160,41 @@ fn sync_rules_or_use_cache(
     }
 }
 
-fn load_aggregation_rules_from_cache(
+fn update_suricata_rules_from_cache(
     rules_cache_file: &str,
-) -> Vec<rules_client::RemoteRule> {
-    match rules_client::load_aggregation_rules(rules_cache_file) {
-        Ok(rules) => {
-            println!("📜 Regole aggregation caricate: {}", rules.len());
-
-            for rule in &rules {
-                println!(
-                    "📌 Rule: {} | type={} | version={}",
-                    rule.name,
-                    rule.rule_type,
-                    rule.version
-                );
+    suricata_rules_file: &str,
+) {
+    match rules_client::write_suricata_rules_file(
+        rules_cache_file,
+        suricata_rules_file,
+    ) {
+        Ok(updated) => {
+            if updated {
+                println!("✅ Regole Suricata aggiornate");
+                println!("ℹ️ Suricata deve ricaricare le regole");
+            } else {
+                println!("ℹ️ Regole Suricata invariate");
             }
-
-            rules
         }
 
         Err(e) => {
-            eprintln!("⚠️ Impossibile caricare regole aggregation: {:?}", e);
-            Vec::new()
+            eprintln!(
+                "⚠️ Errore aggiornamento regole Suricata: {:?}",
+                e
+            );
         }
     }
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
+    env::var(key)
+        .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
+        .unwrap_or(default)
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default)
 }

@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\ProbeController;
 use App\Http\Controllers\Api\EventIngestionController;
 use App\Http\Controllers\Api\RuleController;
 use App\Http\Controllers\Api\IncidentIngestionController;
+use App\Http\Controllers\Api\SuricataRuleController;
 
 Route::post('/incidents/ingest', [IncidentIngestionController::class, 'ingest']);
 
@@ -25,3 +26,7 @@ Route::get('/rules/active', [RuleController::class, 'active']);
 Route::delete('/rules/{uuid}', [RuleController::class, 'destroy']);
 
 Route::get('/probes/{uuid}/rules', [RuleController::class, 'rulesForProbe']);
+
+
+
+Route::get('/rules/suricata', [SuricataRuleController::class, 'index']);

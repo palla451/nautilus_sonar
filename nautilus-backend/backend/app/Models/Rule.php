@@ -18,5 +18,6 @@ class Rule extends Model
 
     protected $casts = [
         'enabled' => 'boolean',
+        'content' => 'array',
     ];
 }

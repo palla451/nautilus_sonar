@@ -134,6 +134,7 @@
       <path value="$PROJECT_DIR$/backend/vendor/opensearch-project/opensearch-php" />
       <path value="$PROJECT_DIR$/backend/vendor/php-http/discovery" />
       <path value="$PROJECT_DIR$/backend/vendor/symfony/yaml" />
+      <path value="$PROJECT_DIR$/backend/vendor/_laravel_idea" />
     </include_path>
   </component>
   <component name="PhpProjectSharedConfiguration" php_language_level="8.3">

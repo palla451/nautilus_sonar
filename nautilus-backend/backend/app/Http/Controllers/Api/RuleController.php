@@ -26,47 +26,55 @@ class RuleController extends Controller
 
     public function store(Request $request)
     {
-        try {
-            $payload = $request->json()->all();
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'type' => 'required|string|in:aggregation,correlation,suricata',
+            'version' => 'nullable|integer',
+            'enabled' => 'nullable',
+        ]);
 
-            $name = $payload['name'] ?? null;
-            $type = $payload['type'] ?? 'correlation';
-            $content = $payload['content'] ?? null;
+        $type = $request->input('type');
 
-            if (!$name) {
-                return response()->json(['message' => 'The name field is required.'], 422);
-            }
-
-            if ($content === null) {
-                return response()->json(['message' => 'The content field is required.'], 422);
-            }
-
-            if (is_array($content) || is_object($content)) {
-                $content = json_encode($content, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-            }
-
-
-            $rule = Rule::create([
-                'uuid' => $payload['uuid'] ?? (string) Str::uuid(),
-                'name' => $name,
-                'description' => $payload['description'] ?? null,
-                'type' => $type,
-                'content' => $content,
-                'version' => $payload['version'] ?? 1,
-                'enabled' => $payload['enabled'] ?? true,
+        if ($type === 'aggregation') {
+            $content = [
+                'source_index' => $request->input('source_index'),
+                'target_index' => $request->input('target_index'),
+                'filter_event_type' => $request->input('filter_event_type'),
+                'group_by' => array_map('trim', explode(',', $request->input('group_by'))),
+                'threshold_count' => (int) $request->input('threshold_count'),
+                'window_seconds' => (int) $request->input('window_seconds'),
+                'severity' => $request->input('severity'),
+                'incident_type' => $request->input('incident_type'),
+                'run_every_seconds' => (int) $request->input('run_every_seconds'),
+            ];
+        } elseif ($type === 'suricata') {
+            $request->validate([
+                'suricata_rule' => 'required|string',
             ]);
 
-            return response()->json([
-                'message' => 'Rule created successfully',
-                'data' => $rule,
-            ], 201);
+            $content = [
+                'engine' => 'suricata',
+                'rule' => $request->input('suricata_rule'),
+            ];
+        } else {
+            $request->validate([
+                'content' => 'required|json',
+            ]);
 
-        } catch (Throwable $e) {
-            return response()->json([
-                'message' => 'Rule creation failed',
-                'error' => $e->getMessage(),
-            ], 500);
+            $content = json_decode($request->input('content'), true);
         }
+
+        Rule::create([
+            'name' => $request->input('name'),
+            'description' => $request->input('description'),
+            'type' => $type,
+            'version' => $request->input('version', 1),
+            'enabled' => $request->has('enabled'),
+            'content' => $content,
+        ]);
+
+        return redirect('/rules')->with('success', 'Rule created successfully');
     }
 
     public function active()

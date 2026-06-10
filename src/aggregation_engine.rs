@@ -84,7 +84,7 @@ impl AggregationEngine {
                     "window_seconds": window_seconds,
                     "group_key": group_key,
                     "last_event": event,
-                    "created_at": now.to_rfc3339(),
+                    "timestamp": now.to_rfc3339(),
                     "source": "local_aggregation_engine"
                 });
 
