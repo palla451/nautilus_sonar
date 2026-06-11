@@ -1,6 +1,84 @@
 # Nautilus Sonar - Installation Guide
 
-## Overview
+# Prerequisites
+
+Before starting Nautilus Sonar, ensure the following software is installed:
+
+* Docker
+* Docker Compose
+* Suricata (installed on the host operating system)
+* curl
+* jq
+
+IMPORTANT
+
+Nautilus Sonar does **not** currently deploy or manage a Suricata instance inside Docker.
+
+Suricata must be installed and running directly on the host operating system.
+
+Without a running Suricata instance, Nautilus will not generate events or incidents.
+
+---
+
+# Verify Suricata Installation
+
+Verify Suricata is installed:
+
+```bash
+which suricata
+```
+
+Expected:
+
+```text
+/usr/bin/suricata
+```
+
+Verify configuration file:
+
+```bash
+sudo find / -name suricata.yaml
+```
+
+Expected:
+
+```text
+/etc/suricata/suricata.yaml
+```
+
+Verify service status:
+
+```bash
+sudo systemctl status suricata
+```
+
+Verify rule path configuration:
+
+```bash
+grep -n "default-rule-path" /etc/suricata/suricata.yaml
+
+grep -n "rule-files" -A20 /etc/suricata/suricata.yaml
+```
+
+Expected:
+
+```yaml
+default-rule-path: /var/lib/suricata/rules
+
+rule-files:
+  - suricata.rules
+  - nautilus.rules
+```
+
+Verify EVE log file:
+
+```bash
+ls -la /var/log/suricata/eve.json
+```
+
+---
+
+# Overview
 
 This document describes how to install, configure and validate the Nautilus Sonar platform.
 
@@ -18,6 +96,7 @@ nautilus_sonar/
 ├── output/
 ├── opensearch/
 ├── dashboards/
+├── INSTALLATION.md
 └── nautilus-backend/
     └── backend/
 ```
@@ -31,7 +110,7 @@ Main Components:
 * OpenSearch
 * OpenSearch Dashboards
 * Laravel Backend
-* Suricata (installed on the host operating system)
+* Suricata (Host OS)
 
 ---
 
@@ -69,13 +148,25 @@ Correlated Incidents
 
 # 1. Start Nautilus Stack
 
+Move to the project root:
+
 ```bash
 cd ~/Project/nautilus_sonar
+```
+
+Build containers:
+
+```bash
 docker compose build
+```
+
+Start containers:
+
+```bash
 docker compose up -d
 ```
 
-Verify containers:
+Verify:
 
 ```bash
 docker ps
@@ -96,9 +187,21 @@ nautilus-opensearch-dashboards
 
 # 2. Start Laravel Backend
 
+Move to backend:
+
 ```bash
 cd ~/Project/nautilus_sonar/nautilus-backend/backend
+```
+
+Build:
+
+```bash
 docker compose build
+```
+
+Start:
+
+```bash
 docker compose up -d
 ```
 
@@ -118,13 +221,13 @@ nautilus-backend
 
 # 3. Laravel Initial Setup
 
-Enter the backend container:
+Enter container:
 
 ```bash
 docker exec -it nautilus-backend bash
 ```
 
-Execute:
+Run:
 
 ```bash
 composer install
@@ -140,7 +243,7 @@ chown -R www-data:www-data storage bootstrap/cache
 php artisan migrate
 ```
 
-Clear Laravel cache:
+Clear cache:
 
 ```bash
 php artisan optimize:clear
@@ -218,7 +321,7 @@ correlation rules
 
 # 6. Verify Generated Suricata Rules
 
-The Sonar service generates:
+Nautilus Sonar generates:
 
 ```text
 /var/lib/suricata/rules/nautilus.rules
@@ -244,11 +347,13 @@ alert dns any any -> any any \
 
 ---
 
-# 7. Reload Suricata Rules
+# 7. Reload Suricata Rules (Mandatory)
 
 IMPORTANT
 
-Updating nautilus.rules does not automatically activate the rule.
+Every time a Suricata rule is created, modified or deleted from the Nautilus Rule Manager, Suricata must reload its rules.
+
+Failure to reload the rules will cause Suricata to continue using previously loaded signatures.
 
 Validate configuration:
 
@@ -290,7 +395,7 @@ rule-files:
 
 # 8. Generate Test Traffic
 
-Example rule:
+Example test rule:
 
 ```suricata
 alert dns any any -> any any \
@@ -312,7 +417,7 @@ dig openai.com
 
 # 9. Verify Suricata Detection
 
-Check eve.json:
+Verify eve.json:
 
 ```bash
 sudo grep "999999" /var/log/suricata/eve.json
@@ -372,6 +477,15 @@ curl -s \
 }'
 ```
 
+Expected:
+
+```json
+{
+  "incident_type": "nautilus_test_alert",
+  "severity": "medium"
+}
+```
+
 ---
 
 # 12. Verify Correlation Incidents
@@ -389,9 +503,33 @@ curl -s \
 }'
 ```
 
+Expected:
+
+```json
+{
+  "incident_type": "nautilus_test_correlation",
+  "severity": "high"
+}
+```
+
 ---
 
-# 13. Logs
+# 13. End-to-End Validation Checklist
+
+Successful validation requires:
+
+* Rule visible in Laravel
+* Rule returned by Rules API
+* Rule written to `/var/lib/suricata/rules/nautilus.rules`
+* Suricata rules reloaded
+* Alert visible in `eve.json`
+* Event visible in `nautilus-events`
+* Aggregation incident visible in `nautilus-incidents`
+* Correlation incident visible in `nautilus-incidents`
+
+---
+
+# 14. Logs
 
 ## Nautilus Sonar
 
@@ -423,9 +561,9 @@ Correlation incident indexed
 
 ---
 
-# 14. Clean Restart
+# 15. Clean Restart
 
-Stop Nautilus:
+Stop Nautilus stack:
 
 ```bash
 cd ~/Project/nautilus_sonar
@@ -437,7 +575,7 @@ rm -rf output
 mkdir -p output
 ```
 
-Stop Laravel:
+Stop Laravel backend:
 
 ```bash
 cd ~/Project/nautilus_sonar/nautilus-backend/backend
@@ -452,7 +590,7 @@ Restart from step 1.
 # Current Access Summary
 
 ```text
-Rule Manager
+Laravel Rule Manager
 http://localhost:8080/rules
 
 Create Rule
@@ -461,7 +599,7 @@ http://localhost:8080/rules/create
 Incidents
 http://localhost:8080/incidents
 
-OpenSearch
+OpenSearch API
 http://localhost:9200
 
 OpenSearch Dashboards
