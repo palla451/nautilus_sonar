@@ -2,11 +2,16 @@
 
 ## Overview
 
-This document describes how to install and start the current Nautilus Sonar environment.
+This document describes how to install, configure and validate the Nautilus Sonar platform.
 
-The project is composed of two main parts:
+The current architecture is composed of:
 
 ```text
+Host Machine
+├── Suricata
+├── eve.json
+└── Nautilus Docker Environment
+
 nautilus_sonar/
 ├── docker-compose.yml
 ├── src/
@@ -17,7 +22,7 @@ nautilus_sonar/
     └── backend/
 ```
 
-Main components:
+Main Components:
 
 * Nautilus Sonar
 * Nautilus Consumer
@@ -26,26 +31,47 @@ Main components:
 * OpenSearch
 * OpenSearch Dashboards
 * Laravel Backend
+* Suricata (installed on the host operating system)
 
 ---
 
-# 1. Start Nautilus Sonar Stack
+# Detection Flow
 
-From the root directory of the project:
+```text
+Laravel Rule Manager
+        ↓
+Rules API
+        ↓
+Nautilus Sonar
+        ↓
+/var/lib/suricata/rules/nautilus.rules
+        ↓
+Suricata Rule Reload
+        ↓
+Suricata Detection
+        ↓
+eve.json
+        ↓
+Nautilus Consumer
+        ↓
+nautilus-events
+        ↓
+Aggregation Rules
+        ↓
+nautilus-incidents
+        ↓
+Correlation Rules
+        ↓
+Correlated Incidents
+```
+
+---
+
+# 1. Start Nautilus Stack
 
 ```bash
 cd ~/Project/nautilus_sonar
-```
-
-Build the Docker images:
-
-```bash
 docker compose build
-```
-
-Start the stack:
-
-```bash
 docker compose up -d
 ```
 
@@ -55,7 +81,7 @@ Verify containers:
 docker ps
 ```
 
-Expected containers include:
+Expected containers:
 
 ```text
 nautilus-sonar
@@ -70,119 +96,91 @@ nautilus-opensearch-dashboards
 
 # 2. Start Laravel Backend
 
-Move into the backend directory:
-
 ```bash
 cd ~/Project/nautilus_sonar/nautilus-backend/backend
-```
-
-Build the backend containers:
-
-```bash
 docker compose build
-```
-
-Start the backend:
-
-```bash
 docker compose up -d
 ```
 
-Verify backend containers:
+Verify:
 
 ```bash
 docker ps
 ```
 
+Expected container:
+
+```text
+nautilus-backend
+```
+
 ---
 
-# 3. Run Laravel Migrations
+# 3. Laravel Initial Setup
 
-Enter the Laravel backend container:
+Enter the backend container:
 
 ```bash
 docker exec -it nautilus-backend bash
 ```
 
-Run database migrations:
+Execute:
 
 ```bash
+composer install
+
+cp .env.example .env
+
+php artisan key:generate
+
+chmod -R 775 storage bootstrap/cache
+
+chown -R www-data:www-data storage bootstrap/cache
+
 php artisan migrate
 ```
 
-Exit the container:
+Clear Laravel cache:
+
+```bash
+php artisan optimize:clear
+```
+
+Exit:
 
 ```bash
 exit
 ```
 
-Alternatively, run migrations directly:
-
-```bash
-docker exec -it nautilus-backend php artisan migrate
-```
-
 ---
 
-# 4. Clear Laravel Cache
+# 4. Access URLs
 
-After code or Blade changes, clear Laravel cache:
-
-```bash
-docker exec -it nautilus-backend php artisan optimize:clear
-```
-
----
-
-# 5. Access URLs
-
-## Laravel Backend
-
-Rule Manager UI:
+## Laravel Rule Manager
 
 ```text
 http://localhost:8080/rules
 ```
 
-Create Rule page:
+## Create Rule
 
 ```text
 http://localhost:8080/rules/create
 ```
 
-Incidents page:
+## Incidents
 
 ```text
 http://localhost:8080/incidents
 ```
 
----
-
 ## OpenSearch
-
-OpenSearch API:
 
 ```text
 http://localhost:9200
 ```
 
-Check cluster health:
-
-```bash
-curl http://localhost:9200/_cluster/health?pretty
-```
-
-Check Nautilus indexes:
-
-```bash
-curl http://localhost:9200/_cat/indices?v
-```
-
----
-
 ## OpenSearch Dashboards
-
-Dashboard UI:
 
 ```text
 http://localhost:5601
@@ -190,31 +188,25 @@ http://localhost:5601
 
 ---
 
-# 6. Verify Rule Synchronization
+# 5. Verify Rule Synchronization
 
-After creating rules from Laravel, verify that the probe receives them.
-
-From the Nautilus Sonar root:
-
-```bash
-cd ~/Project/nautilus_sonar
-```
-
-Check the probe ID:
+Verify probe identifier:
 
 ```bash
 cat output/probe_id
 ```
 
-Query Laravel rules API:
+Query Laravel:
 
 ```bash
 PROBE_ID=$(cat output/probe_id)
 
-curl -s "http://localhost:8080/api/probes/$PROBE_ID/rules" | jq
+curl -s \
+"http://localhost:8080/api/probes/$PROBE_ID/rules" \
+| jq
 ```
 
-Expected result:
+Expected:
 
 ```text
 suricata rules
@@ -224,50 +216,157 @@ correlation rules
 
 ---
 
-# 7. Verify Suricata Rules
+# 6. Verify Generated Suricata Rules
 
-Check generated Nautilus Suricata rules:
+The Sonar service generates:
+
+```text
+/var/lib/suricata/rules/nautilus.rules
+```
+
+Verify:
 
 ```bash
 cat /var/lib/suricata/rules/nautilus.rules
 ```
 
-Expected test rule:
+Example:
 
-```text
-alert udp any any -> any 53 (msg:"NAUTILUS TEST - ANY DNS UDP 53"; sid:1000003; rev:1;)
+```suricata
+alert dns any any -> any any \
+(msg:"NAUTILUS TEST SID 999999";
+ dns.query;
+ content:"openai.com";
+ nocase;
+ sid:999999;
+ rev:1;)
+```
+
+---
+
+# 7. Reload Suricata Rules
+
+IMPORTANT
+
+Updating nautilus.rules does not automatically activate the rule.
+
+Validate configuration:
+
+```bash
+sudo suricata -T -c /etc/suricata/suricata.yaml
+```
+
+Reload rules:
+
+```bash
+sudo suricatasc -c reload-rules
+```
+
+If unavailable:
+
+```bash
+sudo systemctl restart suricata
+```
+
+Verify configuration:
+
+```bash
+grep -n "default-rule-path" /etc/suricata/suricata.yaml
+
+grep -n "rule-files" -A20 /etc/suricata/suricata.yaml
+```
+
+Expected:
+
+```yaml
+default-rule-path: /var/lib/suricata/rules
+
+rule-files:
+  - suricata.rules
+  - nautilus.rules
 ```
 
 ---
 
 # 8. Generate Test Traffic
 
-Generate DNS traffic:
+Example rule:
 
-```bash
-for i in {1..5}; do
-    dig @8.8.8.8 google.com > /dev/null
-done
+```suricata
+alert dns any any -> any any \
+(msg:"NAUTILUS TEST SID 999999";
+ dns.query;
+ content:"openai.com";
+ nocase;
+ sid:999999;
+ rev:1;)
 ```
 
-Verify Suricata alert:
+Generate traffic:
 
 ```bash
-sudo grep '1000003' /var/log/suricata/eve.json | tail -5
+dig openai.com
 ```
 
 ---
 
-# 9. Verify Events in OpenSearch
+# 9. Verify Suricata Detection
+
+Check eve.json:
 
 ```bash
-curl -s "http://localhost:9200/nautilus-events/_search?pretty" \
+sudo grep "999999" /var/log/suricata/eve.json
+```
+
+Expected:
+
+```json
+{
+  "signature_id": 999999,
+  "signature": "NAUTILUS TEST SID 999999"
+}
+```
+
+---
+
+# 10. Verify Events in OpenSearch
+
+```bash
+curl -s \
+"http://localhost:9200/nautilus-events/_search?pretty" \
 -H "Content-Type: application/json" \
 -d '{
-  "size": 5,
   "query": {
     "term": {
-      "payload.signature_id": 1000003
+      "payload.signature_id": 999999
+    }
+  }
+}'
+```
+
+Expected:
+
+```json
+{
+  "event_type": "alert",
+  "payload": {
+    "signature_id": 999999
+  }
+}
+```
+
+---
+
+# 11. Verify Aggregation Incidents
+
+```bash
+curl -s \
+"http://localhost:9200/nautilus-incidents/_search?pretty" \
+-H "Content-Type: application/json" \
+-d '{
+  "query": {
+    "term": {
+      "incident_type": "nautilus_test_alert"
     }
   }
 }'
@@ -275,35 +374,24 @@ curl -s "http://localhost:9200/nautilus-events/_search?pretty" \
 
 ---
 
-# 10. Verify Incidents in OpenSearch
+# 12. Verify Correlation Incidents
 
 ```bash
-curl -s "http://localhost:9200/nautilus-incidents/_search?pretty" \
+curl -s \
+"http://localhost:9200/nautilus-incidents/_search?pretty" \
 -H "Content-Type: application/json" \
 -d '{
-  "size": 10,
-  "sort": [
-    {
-      "timestamp": "desc"
+  "query": {
+    "term": {
+      "incident_type": "nautilus_test_correlation"
     }
-  ]
+  }
 }'
-```
-
-Expected incident fields:
-
-```json
-{
-  "incident_id": "uuid",
-  "correlation_key": "deduplication-key",
-  "incident_type": "dns_alert_aggregation_incident",
-  "severity": "medium"
-}
 ```
 
 ---
 
-# 11. Logs
+# 13. Logs
 
 ## Nautilus Sonar
 
@@ -323,33 +411,33 @@ docker logs nautilus-consumer --tail 100
 docker logs nautilus-correlator --tail 100
 ```
 
-Expected Detection Engine logs:
+Expected:
 
 ```text
-Scarico regole centralizzate da Laravel
-Aggregation rule caricata da Laravel
-Correlation rule caricata da Laravel
-Incidente aggregation indicizzato
-Incidente correlation indicizzato
+Rules downloaded
+Aggregation rule loaded
+Correlation rule loaded
+Aggregation incident indexed
+Correlation incident indexed
 ```
 
 ---
 
-# 12. Clean Restart
+# 14. Clean Restart
 
-To restart from a clean environment:
-
-## Stop Nautilus Sonar stack
+Stop Nautilus:
 
 ```bash
 cd ~/Project/nautilus_sonar
 
 docker compose down -v
+
 rm -rf output
+
 mkdir -p output
 ```
 
-## Stop Laravel backend
+Stop Laravel:
 
 ```bash
 cd ~/Project/nautilus_sonar/nautilus-backend/backend
@@ -357,25 +445,25 @@ cd ~/Project/nautilus_sonar/nautilus-backend/backend
 docker compose down
 ```
 
-Then restart following the installation steps above.
+Restart from step 1.
 
 ---
 
 # Current Access Summary
 
 ```text
-Laravel Rule Manager:
+Rule Manager
 http://localhost:8080/rules
 
-Laravel Create Rule:
+Create Rule
 http://localhost:8080/rules/create
 
-Laravel Incidents:
+Incidents
 http://localhost:8080/incidents
 
-OpenSearch API:
+OpenSearch
 http://localhost:9200
 
-OpenSearch Dashboards:
+OpenSearch Dashboards
 http://localhost:5601
 ```
